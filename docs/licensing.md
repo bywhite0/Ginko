@@ -78,6 +78,16 @@ Ginko 的源码包和 wheel 不内嵌这些依赖的源码或二进制，安装�
 NoneBot 日志还在 Windows 使用下表所列的 `colorama`。这些依赖通过锁文件独立安装，
 不把 SDK 源码复制到 Ginko；core 与 storage 仍不依赖平台或模型 SDK。
 
+模型入口使用独立 HTTP 客户端，新增锁定依赖如下，已核对分发包许可文件与元数据：
+
+| 包 | 锁定版本 | 许可声明 |
+|---|---|---|
+| httpx | 0.28.1 | BSD-3-Clause |
+| httpcore | 1.0.9 | BSD-3-Clause |
+| certifi | 2026.7.22 | MPL-2.0 |
+
+`certifi` 提供证书数据；Ginko 不内嵌或修改该包，安装由包管理器完成，其原许可继续适用。
+
 ## 开发与构建工具
 
 开发依赖同样由 `uv.lock` 锁定，但不属于 Ginko 的生产依赖。

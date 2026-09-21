@@ -6,8 +6,8 @@ Ginko 是一个以百生吟子为初版人格、面向多聊天平台的持续�
 使用 Python 3.13，平台接入采用 NoneBot2 薄适配层，核心与人格、记忆、调度独立。
 
 **当前阶段：0.2.0 开发中。** 已实现统一文本事件、SQLite inbox/outbox、带租约的活动领取、
-记忆受众策略、持久预算账本、运行配置检查、OneBot 文本入库及单实例异步生命周期。
-实际模型、生产发送策略、可直接运行的聊天命令、自动记忆抽取和自主运行仍待实现。
+记忆受众策略、持久预算账本、运行配置检查、OneBot 文本入库、单实例生命周期及有预算约束的模型入口。
+真实模型联调、人格决策、生产发送策略、聊天运行命令、自动记忆抽取和自主运行仍待完成。
 这不是已经上线的聊天 Bot，离线 smoke 只验证存储行为，不生成角色回答，也不发送平台消息。
 
 ## 开始
@@ -41,6 +41,7 @@ src/ginko/
   instance.py        本地数据目录的操作系统独占锁
   runtime.py         有界活动 worker 与独占 sender
   gateway.py         显式配置的反向 WebSocket 生命周期
+  providers/         单次模型请求、用量校验与预算结算
 docs/
   architecture.md    已落实的契约与限制
   roadmap.md         按版本划分的范围与验收
@@ -78,7 +79,7 @@ uv run python scripts/verify_release.py
 参见 [架构](docs/architecture.md)、[版本路线图](docs/roadmap.md) 和
 [人格资源说明](docs/persona/README.md)。`0.1.0` 的离线验证与维护者审核已完成，
 本次不发 Release、不打标签。
-`0.2.0` 已完成运行配置、OneBot 文本入库及程序式服务生命周期。
-生命周期已通过本机真实 WebSocket 与合成决策验收；真实模型应答和专用协议端联调尚未接通。
+`0.2.0` 已完成运行配置、OneBot 文本入库、程序式生命周期及统一模型入口的本地验收。
+测试覆盖本机真实 WebSocket、HTTP 与合成模型响应；真实模型费率、用量契约和专用协议端联调仍待验证。
 
 项目原创代码采用 [AGPL-3.0-only](LICENSE)，人格素材及第三方组件另见 [许可与来源](docs/licensing.md)。

@@ -7,6 +7,7 @@ license = "AGPL-3.0-only AND LicenseRef-Ginko-Persona"
 license-files = ["LICENSE", "NOTICE", "LICENSES/LicenseRef-Ginko-Persona.txt"]
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28,<1",
     "nonebot-adapter-onebot>=2.4,<3",
     "nonebot2[fastapi]>=2.4,<3",
     "pydantic>=2.12,<3",
