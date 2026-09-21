@@ -1,0 +1,64 @@
+[project]
+name = "ginko"
+version = "0.1.0"
+description = "A persistent character agent across chat platforms."
+readme = "README.md"
+license = "AGPL-3.0-only AND LicenseRef-Ginko-Persona"
+license-files = ["LICENSE", "NOTICE", "LICENSES/LicenseRef-Ginko-Persona.txt"]
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2.12,<3"]
+
+[project.scripts]
+ginko = "ginko.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8.4,<10", "ruff>=0.12,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ginko"]
+include = [
+  "/src/ginko/**/*.py",
+  "/src/ginko/personas/ginko/manifest.toml",
+  "/src/ginko/personas/ginko/identity.md",
+  "/src/ginko/personas/ginko/style.md",
+  "/src/ginko/personas/ginko/world.md",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/ginko/**/*.py",
+  "/src/ginko/personas/ginko/manifest.toml",
+  "/src/ginko/personas/ginko/identity.md",
+  "/src/ginko/personas/ginko/style.md",
+  "/src/ginko/personas/ginko/world.md",
+  "/tests/**/*.py",
+  "/scripts/verify_release.py",
+  "/pyproject.toml",
+  "/uv.lock",
+  "/README.md",
+  "/docs/architecture.md",
+  "/docs/roadmap.md",
+  "/docs/release-plan.md",
+  "/docs/licensing.md",
+  "/docs/persona/README.md",
+  "/docs/releases/0.1.0.md",
+  "/LICENSE",
+  "/NOTICE",
+  "/LICENSES/LicenseRef-Ginko-Persona.txt",
+  "/.python-version",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

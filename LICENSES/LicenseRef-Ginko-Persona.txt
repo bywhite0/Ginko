@@ -1,0 +1,23 @@
+Ginko persona material rights notice
+Custom SPDX LicenseRef: LicenseRef-Ginko-Persona
+This is a project rights notice, not an entry in the SPDX License List.
+
+Scope: src/ginko/personas/ginko/ and the persona material it contains.
+
+The bundled Momose Ginko profile draws on the character material of Love Live!
+Hasunosora Jyogakuin School Idol Club and maintainer-provided Hermes persona
+source material.
+
+These materials are not covered by Ginko's AGPL-3.0-only code license. Original
+characters, story material, trademarks and source materials remain subject to
+the rights of their respective holders. Ginko contributors do not grant any
+additional rights in those third-party materials.
+
+This notice does not grant permission to redistribute the persona materials.
+The project has not established the permissions needed for their public
+redistribution. Such distribution requires the applicable permissions.
+
+The separation of persona materials does not change the AGPL-3.0-only license
+for Ginko's original code, tests, release scripts and project documentation.
+Original source snapshots, private messages and research records are not part
+of the distributed artifacts.
