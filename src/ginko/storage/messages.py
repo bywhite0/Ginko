@@ -1,7 +1,7 @@
 """Durable inbox leases and a deliberately conservative delivery lifecycle."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4, uuid5
 
 from ginko.core.events import EventEnvelope, SessionRef
@@ -21,6 +21,8 @@ class EventClaim:
     event: EventEnvelope
     token: str
     attempts: int
+    lease_until: datetime
+    expires_at: datetime
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,9 @@ class MessageStore:
             )
         return event.event_id
 
-    def claim(self, now: datetime, *, lease_seconds: int = 60) -> EventClaim | None:
+    def claim(
+        self, now: datetime, *, lease_seconds: int = 60, agent_id: str | None = None
+    ) -> EventClaim | None:
         moment = timestamp(now)
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
@@ -69,8 +73,9 @@ class MessageStore:
             connection.execute(
                 """UPDATE inbox SET status = 'failed', claim_token = NULL
                 WHERE status IN ('pending', 'processing')
+                AND (? IS NULL OR agent_id = ?)
                 AND (expires_at <= ? OR (attempts >= max_attempts AND lease_until <= ?))""",
-                (moment, moment),
+                (agent_id, agent_id, moment, moment),
             )
             row = connection.execute(
                 """SELECT candidate.* FROM inbox AS candidate
@@ -78,25 +83,44 @@ class MessageStore:
                        OR (candidate.status = 'processing' AND candidate.lease_until <= ?))
                   AND candidate.attempts < candidate.max_attempts
                   AND candidate.expires_at > ?
+                  AND (? IS NULL OR candidate.agent_id = ?)
                   AND NOT EXISTS (
                       SELECT 1 FROM inbox AS active
                       WHERE active.agent_id = candidate.agent_id
                         AND active.status = 'processing' AND active.lease_until > ?
                   )
                 ORDER BY candidate.seq LIMIT 1""",
-                (moment, moment, moment),
+                (moment, moment, agent_id, agent_id, moment),
             ).fetchone()
             if row is None:
                 return None
             token = str(uuid4())
+            lease_until = min(moment + lease_seconds, row["expires_at"])
             connection.execute(
                 """UPDATE inbox SET status = 'processing', attempts = attempts + 1,
                 claim_token = ?, lease_until = ? WHERE event_id = ?""",
-                (token, min(moment + lease_seconds, row["expires_at"]), row["event_id"]),
+                (token, lease_until, row["event_id"]),
             )
             return EventClaim(
-                EventEnvelope.model_validate_json(row["payload"]), token, row["attempts"] + 1
+                EventEnvelope.model_validate_json(row["payload"]),
+                token,
+                row["attempts"] + 1,
+                datetime.fromtimestamp(lease_until, UTC),
+                datetime.fromtimestamp(row["expires_at"], UTC),
             )
+
+    def fail(self, claim: EventClaim, *, now: datetime) -> None:
+        """Reject an activity permanently, with the same fencing as a successful decision."""
+        moment = timestamp(now)
+        with self.database.transaction() as connection:
+            changed = connection.execute(
+                """UPDATE inbox SET status = 'failed', claim_token = NULL
+                WHERE event_id = ? AND status = 'processing' AND claim_token = ?
+                  AND lease_until > ? AND expires_at > ?""",
+                (str(claim.event.event_id), claim.token, moment, moment),
+            ).rowcount
+            if changed != 1:
+                raise StaleClaimError("claim is expired or has already been replaced")
 
     def complete(self, claim: EventClaim, *, now: datetime, reply: str | None) -> UUID | None:
         """Commit the decision and outbound intent together; no network call here."""
@@ -135,10 +159,13 @@ class MessageStore:
             )
         return delivery_id
 
-    def claim_delivery(self) -> Delivery | None:
+    def claim_delivery(self, *, agent_id: str | None = None) -> Delivery | None:
         with self.database.transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM outbox WHERE status = 'pending' ORDER BY seq LIMIT 1"
+                """SELECT outbox.* FROM outbox JOIN inbox USING (event_id)
+                WHERE outbox.status = 'pending' AND (? IS NULL OR inbox.agent_id = ?)
+                ORDER BY outbox.seq LIMIT 1""",
+                (agent_id, agent_id),
             ).fetchone()
             if row is None:
                 return None
@@ -184,6 +211,16 @@ class MessageStore:
             ).rowcount
             if changed != 1:
                 raise DeliveryStateError("only an in-flight delivery can become unknown")
+
+    def fail_delivery(self, delivery_id: UUID) -> None:
+        """Stop an attempted delivery after a definite local or platform rejection."""
+        with self.database.transaction() as connection:
+            changed = connection.execute(
+                "UPDATE outbox SET status = 'failed' WHERE delivery_id = ? AND status = 'sending'",
+                (str(delivery_id),),
+            ).rowcount
+            if changed != 1:
+                raise DeliveryStateError("only an in-flight delivery can be rejected")
 
     def recover_interrupted_deliveries(self) -> int:
         """Call once at exclusive sender startup, never alongside an active sender."""

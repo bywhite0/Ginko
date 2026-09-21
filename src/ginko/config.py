@@ -55,6 +55,7 @@ class OneBotSettings(Settings):
     host: Literal["127.0.0.1", "::1"] = "127.0.0.1"
     port: Annotated[int, Field(gt=0, le=65535)] = 8080
     access_token_env: EnvName = "GINKO_ONEBOT_ACCESS_TOKEN"
+    api_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 10.0
 
 
 class ModelSettings(Settings):

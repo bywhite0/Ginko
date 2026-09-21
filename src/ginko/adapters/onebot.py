@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from nonebot import on_message
+from nonebot.adapters import Adapter as BaseAdapter
 from nonebot.adapters.onebot.v11 import (
     Adapter,
     Bot,
@@ -13,8 +14,10 @@ from nonebot.adapters.onebot.v11 import (
     MessageEvent,
     PrivateMessageEvent,
 )
-from nonebot.drivers import Driver
+from nonebot.adapters.onebot.v11.config import Config as OneBotConfig
+from nonebot.drivers import Driver, Request, Response, WebSocket
 from nonebot.matcher import Matcher
+from pydantic import SecretStr
 
 from ginko.config import RuntimeSettings
 from ginko.core.events import EventEnvelope, SessionRef, TextSegment
@@ -83,11 +86,47 @@ def normalize_message(
 class OneBotAdapter(Adapter):
     """Filter messages before SDK Bot preprocessing can query quoted-message content."""
 
-    def __init__(self, driver: Driver, *, settings: RuntimeSettings) -> None:
+    def __init__(
+        self, driver: Driver, *, settings: RuntimeSettings, access_token: SecretStr
+    ) -> None:
         self.settings = settings
-        super().__init__(driver)
+        # The SDK constructor reads NoneBot's global config. Use its explicit equivalent
+        # for this dedicated driver; integration tests cover this SDK compatibility seam.
+        BaseAdapter.__init__(self, driver)
+        self.onebot_config = OneBotConfig(onebot_access_token=access_token.get_secret_value())
+        self.connections = {}
+        self.tasks = set()
+        self._ws_active = False
+        self._setup()
+
+    async def _handle_http(self, request: Request) -> Response:
+        # Only authenticated reverse WebSocket is supported; the SDK's HTTP path uses
+        # a different, optional signature mechanism and must not become a second ingress.
+        return Response(405, content="Use the configured reverse WebSocket endpoint")
+
+    async def _handle_ws(self, websocket: WebSocket) -> None:
+        headers = websocket.request.headers
+        if (
+            headers.get("x-self-id") != self.settings.onebot.bot_id
+            or headers.get("x-client-role") != "Universal"
+            or self._ws_active
+        ):
+            await websocket.close(1008, "Unexpected or duplicate OneBot connection")
+            return
+        # Reserve the slot before accept(), including simultaneous handshakes.
+        self._ws_active = True
+        try:
+            await super()._handle_ws(websocket)
+        finally:
+            self._ws_active = False
 
     def json_to_event(self, json_data: object) -> Event | None:
+        if (
+            isinstance(json_data, dict)
+            and "post_type" in json_data
+            and str(json_data.get("self_id")) != self.settings.onebot.bot_id
+        ):
+            return None
         event = super().json_to_event(json_data)
         if (
             isinstance(event, MessageEvent)
@@ -104,8 +143,14 @@ class OneBotIngress:
         self.settings = settings
         self.store = store
         self.wake = wake
+        self.accepting = True
+
+    def close(self) -> None:
+        self.accepting = False
 
     def receive(self, event: MessageEvent, *, received_at: datetime | None = None) -> UUID | None:
+        if not self.accepting:
+            return None
         normalized = normalize_message(
             event, self.settings, received_at=received_at or datetime.now(UTC)
         )
@@ -121,13 +166,27 @@ class OneBotIngress:
         return event_id
 
 
-def register_ingress(ingress: OneBotIngress) -> type[Matcher]:
+def register_ingress(
+    ingress: OneBotIngress,
+    *,
+    adapter: OneBotAdapter | None = None,
+    on_failure: Callable[[Exception], None] | None = None,
+) -> type[Matcher]:
     """Install the thin NoneBot handler once during application startup."""
     matcher = on_message(priority=1, block=False)
 
     @matcher.handle()
     async def receive(bot: Bot, event: MessageEvent) -> None:
-        if bot.self_id == ingress.settings.onebot.bot_id:
-            ingress.receive(event)
+        if bot.self_id == ingress.settings.onebot.bot_id and (
+            adapter is None or bot.adapter is adapter
+        ):
+            try:
+                ingress.receive(event)
+            except Exception as error:
+                # NoneBot catches matcher exceptions. Explicitly notify supervision so a
+                # broken durable inbox cannot remain online while silently losing events.
+                if on_failure is None:
+                    raise
+                on_failure(error)
 
     return matcher

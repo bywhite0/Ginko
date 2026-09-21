@@ -13,6 +13,7 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     PrivateMessageEvent,
 )
+from pydantic import SecretStr
 
 from ginko.adapters.onebot import OneBotAdapter, OneBotIngress, normalize_message, register_ingress
 from ginko.config import RuntimeSettings
@@ -229,7 +230,9 @@ def test_redelivery_after_decision_does_not_recreate_outbox(
 @pytest.mark.parametrize("connected_bot", ["10000", "10001"])
 def test_nonebot_dispatch_checks_connection_identity(payload, settings, database, connected_bot):
     nonebot.init(driver="~fastapi", log_level="ERROR")
-    adapter = OneBotAdapter(nonebot.get_driver(), settings=settings)
+    adapter = OneBotAdapter(
+        nonebot.get_driver(), settings=settings, access_token=SecretStr("synthetic-token")
+    )
     bot = Bot(adapter, connected_bot)
     store = MessageStore(database)
     wakes = []
@@ -247,7 +250,9 @@ def test_nonebot_dispatch_checks_connection_identity(payload, settings, database
 @pytest.mark.parametrize("user_id", [20001, 20002])
 def test_rejected_quotes_never_reach_sdk_network_preprocessing(payload, settings, user_id):
     nonebot.init(driver="~fastapi", log_level="ERROR")
-    adapter = OneBotAdapter(nonebot.get_driver(), settings=settings)
+    adapter = OneBotAdapter(
+        nonebot.get_driver(), settings=settings, access_token=SecretStr("synthetic-token")
+    )
     calls = []
 
     class TrackingBot(Bot):
@@ -270,7 +275,9 @@ def test_rejected_quotes_never_reach_sdk_network_preprocessing(payload, settings
 
 def test_admission_adapter_preserves_api_receipts(settings):
     nonebot.init(driver="~fastapi", log_level="ERROR")
-    adapter = OneBotAdapter(nonebot.get_driver(), settings=settings)
+    adapter = OneBotAdapter(
+        nonebot.get_driver(), settings=settings, access_token=SecretStr("synthetic-token")
+    )
 
     async def receive_receipt():
         sequence = adapter._result_store.get_seq()
