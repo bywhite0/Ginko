@@ -1,0 +1,43 @@
+# Copy to config.local.toml. This example has zero budget and cannot authorize paid calls.
+config_version = 1
+agent_id = "ginko"
+data_dir = "data"
+approved_persona_version = "1.0.0"
+behavior = "mixed"
+autonomous = false
+relationships = []
+
+[[allowed_sessions]]
+kind = "private"
+chat_id = "20001"
+
+[onebot]
+bot_id = "10000"
+host = "127.0.0.1"
+port = 8080
+access_token_env = "GINKO_ONEBOT_ACCESS_TOKEN"
+
+[model]
+protocol = "chat_completions"
+base_url = "https://api.example.invalid/v1"
+model = "deepseek-v4.1-flash"
+api_key_env = "GINKO_MODEL_API_KEY"
+timeout_seconds = 30.0
+max_input_tokens = 16000
+max_output_tokens = 1000
+# Illustrative prices only. Verify the actual endpoint's prices before enabling a budget.
+# 1 USD = 1,000,000 micro-USD. Rates below apply to one million tokens.
+input_microusd_per_million_tokens = 5000000
+output_microusd_per_million_tokens = 25000000
+price_checked_on = 2026-09-22
+
+[budget]
+daily_microusd = 0
+monthly_microusd = 0
+
+[activity]
+lease_seconds = 60
+ttl_seconds = 300
+max_attempts = 2
+max_input_chars = 2000
+max_reply_chars = 1000

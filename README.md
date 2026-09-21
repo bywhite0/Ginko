@@ -5,8 +5,8 @@
 Ginko 是一个以百生吟子为初版人格、面向多聊天平台的持续角色智能体项目。
 使用 Python 3.13，平台接入计划采用 NoneBot2 薄适配层，核心与人格、记忆、调度独立。
 
-**当前阶段：基础工程。** 已实现统一文本事件、SQLite inbox/outbox、带租约的活动领取、
-记忆受众策略、持久预算账本及离线命令。QQ 接入、真实 LLM 应答、自动记忆抽取和自主运行仍待实现。
+**当前阶段：0.2.0 开发中。** 已实现统一文本事件、SQLite inbox/outbox、带租约的活动领取、
+记忆受众策略、持久预算账本、离线命令及运行配置检查。QQ 接入、真实 LLM 应答、自动记忆抽取和自主运行仍待实现。
 这不是已经上线的聊天 Bot，离线 smoke 只验证存储行为，不生成角色回答，也不发送平台消息。
 
 ## 开始
@@ -19,8 +19,12 @@ uv run ginko persona
 ```
 
 `doctor` 检查安装和人格资源；`smoke` 使用临时 SQLite 文件完成事件去重、重开数据库恢复待办、
-合成预算结算和模拟发送回执。它不需要账号、API Key 或网络。后续真实接入配置单独添加。
+合成预算结算和模拟发送回执。它不需要账号、API Key 或网络。
 离线命令的标准输出使用 UTF-8，便于在 Windows / Linux 中重定向并保留中文内容。
+
+0.2.0 的运行配置使用 `config.example.toml` 作为模板，保存到被 Git 忽略的 `config.local.toml`；
+设置其引用的凭据环境变量后执行 `uv run ginko check-config config.local.toml`。
+检查不连接外部服务，示例预算为零。功能进度见 [路线图](docs/roadmap.md)。
 
 ## 结构
 
@@ -31,6 +35,7 @@ src/ginko/
   personas/ginko/    版本化身份、语气与静态知识
   persona.py         人格资源加载
   cli.py             离线检查
+  config.py          运行配置与可信关系授权
 docs/
   architecture.md    已落实的契约与限制
   roadmap.md         按版本划分的范围与验收
@@ -68,6 +73,6 @@ uv run python scripts/verify_release.py
 参见 [架构](docs/architecture.md)、[版本路线图](docs/roadmap.md) 和
 [人格资源说明](docs/persona/README.md)。`0.1.0` 的离线验证与维护者审核已完成，
 本次不发 Release、不打标签。
-后续 `0.2.0` 的单平台真实文本应答尚未开始。
+`0.2.0` 已开始逐步实现，当前完成运行配置，单平台真实文本应答尚未接通。
 
 项目原创代码采用 [AGPL-3.0-only](LICENSE)，人格素材及第三方组件另见 [许可与来源](docs/licensing.md)。

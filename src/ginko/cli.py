@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from ginko import __version__
+from ginko.config import ConfigurationError, load_config
 from ginko.core.events import EventEnvelope, SessionRef, TextSegment
 from ginko.persona import load_ginko
 from ginko.storage.budget import BudgetLedger, BudgetLimits
@@ -70,8 +71,38 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("doctor", help="inspect the installed persona and stage")
     subparsers.add_parser("smoke", help="run a disposable, offline persistence check")
     subparsers.add_parser("persona", help="show the curated persona identity and style")
+    config_parser = subparsers.add_parser(
+        "check-config", help="validate local runtime configuration"
+    )
+    config_parser.add_argument("path", type=Path)
     args = parser.parse_args(argv)
-    if args.command == "smoke":
+    if args.command == "check-config":
+        try:
+            configured = load_config(args.path)
+        except ConfigurationError as error:
+            print(f"Configuration error: {error}", file=sys.stderr)
+            return 2
+        settings = configured.settings
+        print(
+            json.dumps(
+                {
+                    "status": "valid",
+                    "config_version": settings.config_version,
+                    "persona_version": configured.persona.version,
+                    "allowed_sessions": len(settings.allowed_sessions),
+                    "relationships": len(settings.relationships),
+                    "autonomous": settings.autonomous,
+                    "model_protocol": settings.model.protocol,
+                    "daily_microusd": settings.budget.daily_microusd,
+                    "monthly_microusd": settings.budget.monthly_microusd,
+                    "attempt_reservation_microusd": settings.model.reservation_microusd,
+                    "live_gateway": False,
+                    "live_model": False,
+                },
+                indent=2,
+            )
+        )
+    elif args.command == "smoke":
         print(json.dumps(smoke(), ensure_ascii=False, indent=2))
     elif args.command == "doctor":
         persona = load_ginko()

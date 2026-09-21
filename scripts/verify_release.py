@@ -27,6 +27,7 @@ SDIST_FILES = {
     "pyproject.toml",
     "uv.lock",
     "README.md",
+    "config.example.toml",
     "docs/architecture.md",
     "docs/roadmap.md",
     "docs/persona/README.md",
