@@ -3,10 +3,10 @@
 让人格在对话之间延续，让记忆随相遇生长。
 
 Ginko 是一个以百生吟子为初版人格、面向多聊天平台的持续角色智能体项目。
-使用 Python 3.13，平台接入计划采用 NoneBot2 薄适配层，核心与人格、记忆、调度独立。
+使用 Python 3.13，平台接入采用 NoneBot2 薄适配层，核心与人格、记忆、调度独立。
 
 **当前阶段：0.2.0 开发中。** 已实现统一文本事件、SQLite inbox/outbox、带租约的活动领取、
-记忆受众策略、持久预算账本、离线命令及运行配置检查。QQ 接入、真实 LLM 应答、自动记忆抽取和自主运行仍待实现。
+记忆受众策略、持久预算账本、运行配置检查及 OneBot 文本入库。常驻服务、真实 LLM 应答、自动记忆抽取和自主运行仍待实现。
 这不是已经上线的聊天 Bot，离线 smoke 只验证存储行为，不生成角色回答，也不发送平台消息。
 
 ## 开始
@@ -30,6 +30,7 @@ uv run ginko persona
 
 ```text
 src/ginko/
+  adapters/          NoneBot / OneBot V11 文本归一化与入库
   core/              平台无关事件、记忆受众、概率换算
   storage/           SQLite 事件、投递、预算
   personas/ginko/    版本化身份、语气与静态知识
@@ -73,6 +74,6 @@ uv run python scripts/verify_release.py
 参见 [架构](docs/architecture.md)、[版本路线图](docs/roadmap.md) 和
 [人格资源说明](docs/persona/README.md)。`0.1.0` 的离线验证与维护者审核已完成，
 本次不发 Release、不打标签。
-`0.2.0` 已开始逐步实现，当前完成运行配置，单平台真实文本应答尚未接通。
+`0.2.0` 已完成运行配置与 OneBot 文本入库，常驻生命周期与真实文本应答尚未接通。
 
 项目原创代码采用 [AGPL-3.0-only](LICENSE)，人格素材及第三方组件另见 [许可与来源](docs/licensing.md)。
