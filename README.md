@@ -20,6 +20,7 @@ uv run ginko persona
 
 `doctor` 检查安装和人格资源；`smoke` 使用临时 SQLite 文件完成事件去重、重开数据库恢复待办、
 合成预算结算和模拟发送回执。它不需要账号、API Key 或网络。后续真实接入配置单独添加。
+离线命令的标准输出使用 UTF-8，便于在 Windows / Linux 中重定向并保留中文内容。
 
 ## 结构
 

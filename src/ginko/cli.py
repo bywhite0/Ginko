@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -61,6 +62,8 @@ def smoke() -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows pipes may default to a code page that cannot encode the persona.
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="ginko", description="Ginko foundation tools")
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)

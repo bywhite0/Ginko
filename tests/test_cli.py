@@ -1,4 +1,9 @@
 import json
+import os
+import subprocess
+import sys
+
+import pytest
 
 from ginko.cli import main, smoke
 from ginko.persona import load_ginko
@@ -25,3 +30,15 @@ def test_doctor_does_not_claim_live_capability(capsys):
     assert result["stage"] == "foundation"
     assert result["live_gateway"] is False
     assert result["live_model"] is False
+
+
+@pytest.mark.parametrize("command", ["doctor", "smoke", "persona"])
+def test_cli_emits_utf8_with_legacy_stdout_encoding(command):
+    result = subprocess.run(
+        [sys.executable, "-m", "ginko", command],
+        env={**os.environ, "PYTHONUTF8": "0", "PYTHONIOENCODING": "cp1252"},
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    assert load_ginko().display_name in result.stdout.decode("utf-8")
