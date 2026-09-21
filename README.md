@@ -66,8 +66,8 @@ uv run python scripts/verify_release.py
 不包含原始来源资料、凭据、聊天记录或运行数据。
 
 参见 [架构](docs/architecture.md)、[版本路线图](docs/roadmap.md) 和
-[人格资源说明](docs/persona/README.md)。当前继续完成 `0.1.0` 的发布前验证，
-尚未正式发布。
+[人格资源说明](docs/persona/README.md)。`0.1.0` 的离线验证与维护者审核已完成，
+本次不发 Release、不打标签。
 后续 `0.2.0` 的单平台真实文本应答尚未开始。
 
 项目原创代码采用 [AGPL-3.0-only](LICENSE)，人格素材及第三方组件另见 [许可与来源](docs/licensing.md)。
