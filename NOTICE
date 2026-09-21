@@ -1,0 +1,16 @@
+Ginko
+Copyright (C) 2026 Ginko contributors
+
+The original Ginko source code, tests, release scripts and project documentation
+are licensed under the GNU Affero General Public License, version 3 only
+(SPDX: AGPL-3.0-only). See LICENSE for the full license text. This project does
+not offer an "or any later version" option.
+
+The persona materials under src/ginko/personas/ginko/ are excluded from this
+code license. See LICENSES/LicenseRef-Ginko-Persona.txt for their separate
+rights notice. This project does not grant rights to third-party characters,
+story material, trademarks or other source materials through its code license.
+
+Third-party dependencies retain their own licenses. Their code is installed as
+separate dependencies and is not included in the Ginko wheel or source archive.
+See docs/licensing.md for the dependency license review and distribution scope.

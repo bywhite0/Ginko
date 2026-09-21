@@ -1,0 +1,34 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+      - run: uv run ginko smoke
+      - run: uv build
+      - run: uv run python scripts/verify_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ginko-verified-${{ matrix.os }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/verification.json
+            dist/SHA256SUMS
+          if-no-files-found: error
