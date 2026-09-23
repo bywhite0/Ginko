@@ -31,8 +31,8 @@ class UsageDetails(BaseModel):
 
 
 class TokenUsage(BaseModel):
-    # Cache and reasoning details do not reduce our conservative price: all prompt tokens
-    # use the uncached input rate, and completion_tokens must include reasoning tokens.
+    # Completion tokens must include reasoning; cache discounts need explicit configured
+    # rates and validated cache counts. Missing cache detail uses the full input rate.
     model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
     prompt_tokens: Annotated[int, Field(ge=1, le=2**31 - 1)]
     completion_tokens: Annotated[int, Field(ge=0, le=2**31 - 1)]
@@ -71,6 +71,14 @@ class TokenUsage(BaseModel):
         ):
             raise ValueError("cache counts do not sum to prompt tokens")
         return self
+
+    @property
+    def cached_tokens(self) -> int:
+        if self.prompt_cache_hit_tokens is not None:
+            return self.prompt_cache_hit_tokens
+        if self.prompt_tokens_details is not None:
+            return self.prompt_tokens_details.cached_tokens or 0
+        return 0
 
 
 @dataclass(frozen=True)
@@ -199,13 +207,28 @@ class ChatClient:
                 retryable=retryable,
             ) from None
 
-        cost = sum(
-            (tokens * rate + 999_999) // 1_000_000
-            for tokens, rate in (
-                (usage.prompt_tokens, self.settings.input_microusd_per_million_tokens),
-                (usage.completion_tokens, self.settings.output_microusd_per_million_tokens),
+        choices = data.get("choices")
+        if (
+            usage.completion_tokens == 0
+            and isinstance(choices, list)
+            and any(
+                isinstance(choice, dict)
+                and isinstance(choice.get("message"), dict)
+                and (choice["message"].get("content") or choice["message"].get("reasoning_content"))
+                for choice in choices
             )
-        )
+        ):
+            raise ModelCallError("unknown_usage", operation_id=operation_id, retryable=retryable)
+
+        cache_rate = self.settings.cached_input_microusd_per_million_tokens
+        if cache_rate is None:
+            cache_rate = self.settings.input_microusd_per_million_tokens
+        input_numerator = (
+            usage.prompt_tokens - usage.cached_tokens
+        ) * self.settings.input_microusd_per_million_tokens + usage.cached_tokens * cache_rate
+        cost = (input_numerator + 999_999) // 1_000_000 + (
+            usage.completion_tokens * self.settings.output_microusd_per_million_tokens + 999_999
+        ) // 1_000_000
         # Settle before inspecting generated content. Refusal, empty/truncated replies and
         # downstream JSON/business-validation failures must not erase billed usage.
         self.ledger.settle(operation_id, cost)
@@ -227,7 +250,6 @@ class ChatClient:
                 operation_id=operation_id,
                 retryable=retryable,
             )
-        choices = data.get("choices")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
             raise ModelCallError("invalid_choices", operation_id=operation_id, retryable=True)
         choice = choices[0]

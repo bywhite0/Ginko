@@ -33,6 +33,7 @@ def settings():
         max_input_tokens=1000,
         max_output_tokens=100,
         input_microusd_per_million_tokens=1_000_000,
+        cached_input_microusd_per_million_tokens=None,
         output_microusd_per_million_tokens=2_000_000,
     )
     return RuntimeSettings.model_validate(raw).model
@@ -398,15 +399,49 @@ def test_incomplete_body_timeout_or_cancellation_closes_transport_and_survives_r
 )
 def test_provider_overrun_records_cost_before_stopping(database, settings, output, exception):
     usage = {"prompt_tokens": 1001, "completion_tokens": output, "total_tokens": 1001 + output}
+    data = completion(usage=usage)
+    if output == 0:
+        data["choices"][0]["message"]["content"] = ""
 
     async def run():
-        async with client(
-            settings, ledger(database), lambda _: response(completion(usage=usage))
-        ) as model:
+        async with client(settings, ledger(database), lambda _: response(data)) as model:
             with pytest.raises(exception):
                 await model.complete(MESSAGES, trace_id=uuid4())
         assert rows(database)[0]["status"] == "settled"
         assert rows(database)[0]["actual"] == 1001 + 2 * output
+
+    asyncio.run(run())
+
+
+def test_cache_price_uses_only_validated_hit_counts_and_reserves_worst_case(database, settings):
+    priced = settings.model_copy(
+        update={
+            "input_microusd_per_million_tokens": 220_000,
+            "cached_input_microusd_per_million_tokens": 7_000,
+            "output_microusd_per_million_tokens": 660_000,
+        }
+    )
+    data = completion()
+    data["usage"]["prompt_cache_hit_tokens"] = 20
+
+    async def run():
+        async with client(priced, ledger(database), lambda _: response(data)) as model:
+            result = await model.complete(MESSAGES, trace_id=uuid4())
+        # Input: ceil((10*220000 + 20*7000)/1e6)=3; output: ceil(10*660000/1e6)=7.
+        assert result.cost_microusd == 10
+        assert rows(database)[0]["reserved"] == 286
+
+    asyncio.run(run())
+
+
+def test_nonempty_generated_text_with_zero_output_usage_stays_reserved(database, settings):
+    data = completion(usage={"prompt_tokens": 30, "completion_tokens": 0, "total_tokens": 30})
+
+    async def run():
+        async with client(settings, ledger(database), lambda _: response(data)) as model:
+            with pytest.raises(ModelCallError, match="unknown_usage"):
+                await model.complete(MESSAGES, trace_id=uuid4())
+        assert rows(database)[0]["status"] == "reserved"
 
     asyncio.run(run())
 

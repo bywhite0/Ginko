@@ -4,6 +4,8 @@ import tomllib
 from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 import nonebot
 import pytest
@@ -15,10 +17,17 @@ from nonebot.adapters.onebot.v11 import (
 )
 from pydantic import SecretStr
 
-from ginko.adapters.onebot import OneBotAdapter, OneBotIngress, normalize_message, register_ingress
+from ginko.adapters.onebot import (
+    OneBotAdapter,
+    OneBotIngress,
+    normalize_message,
+    register_ingress,
+    send_text,
+)
 from ginko.config import RuntimeSettings
+from ginko.core.events import SessionRef
 from ginko.storage.database import Database
-from ginko.storage.messages import MessageStore
+from ginko.storage.messages import Delivery, MessageStore
 
 
 @pytest.fixture
@@ -288,3 +297,47 @@ def test_admission_adapter_preserves_api_receipts(settings):
         assert await pending == receipt
 
     asyncio.run(receive_receipt())
+
+
+@pytest.mark.parametrize("kind", ["private", "group"])
+def test_send_text_uses_only_allowlisted_target_and_requires_receipt(settings, kind):
+    target = "20001" if kind == "private" else "30001"
+    session = SessionRef(platform="qq", bot_id="10000", kind=kind, chat_id=target)
+    calls = []
+
+    class FakeBot:
+        async def send_private_msg(self, **data):
+            calls.append(("private", data))
+            return {"message_id": 41}
+
+        async def send_group_msg(self, **data):
+            calls.append(("group", data))
+            return {"message_id": 42}
+
+    adapter = SimpleNamespace(settings=settings, bots={"10000": FakeBot()})
+    delivery = Delivery(uuid4(), uuid4(), session, "literal text")
+    receipt = asyncio.run(send_text(adapter, delivery))
+    assert receipt in {"41", "42"}
+    assert calls[0][0] == kind
+    assert calls[0][1]["message"].extract_plain_text() == "literal text"
+
+
+def test_send_text_rejects_missing_or_malformed_receipt(settings):
+    session = SessionRef(platform="qq", bot_id="10000", kind="private", chat_id="20001")
+
+    class FakeBot:
+        async def send_private_msg(self, **data):
+            return {"message_id": "41"}
+
+    adapter = SimpleNamespace(settings=settings, bots={"10000": FakeBot()})
+    delivery = Delivery(uuid4(), uuid4(), session, "literal text")
+    with pytest.raises(RuntimeError, match="receipt"):
+        asyncio.run(send_text(adapter, delivery))
+
+
+def test_send_text_rejects_target_outside_allowlist(settings):
+    session = SessionRef(platform="qq", bot_id="10000", kind="private", chat_id="20002")
+    adapter = SimpleNamespace(settings=settings, bots={})
+    delivery = Delivery(uuid4(), uuid4(), session, "literal text")
+    with pytest.raises(ValueError, match="allowlist"):
+        asyncio.run(send_text(adapter, delivery))

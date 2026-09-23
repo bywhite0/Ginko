@@ -67,6 +67,7 @@ class ModelSettings(Settings):
     max_input_tokens: PositiveInt
     max_output_tokens: PositiveInt
     input_microusd_per_million_tokens: Annotated[int, Field(gt=0, le=10**15)]
+    cached_input_microusd_per_million_tokens: Annotated[int | None, Field(ge=0, le=10**15)] = None
     output_microusd_per_million_tokens: Annotated[int, Field(gt=0, le=10**15)]
     price_checked_on: date
 
@@ -97,7 +98,13 @@ class ModelSettings(Settings):
         return sum(
             (tokens * rate + 999_999) // 1_000_000
             for tokens, rate in (
-                (self.max_input_tokens, self.input_microusd_per_million_tokens),
+                (
+                    self.max_input_tokens,
+                    max(
+                        self.input_microusd_per_million_tokens,
+                        self.cached_input_microusd_per_million_tokens or 0,
+                    ),
+                ),
                 (self.max_output_tokens, self.output_microusd_per_million_tokens),
             )
         )

@@ -1,6 +1,7 @@
-"""Offline inspection and smoke check. This command never contacts a platform."""
+"""Offline checks and an explicit, configured dedicated-session service entry point."""
 
 import argparse
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -75,13 +76,26 @@ def main(argv: list[str] | None = None) -> int:
         "check-config", help="validate local runtime configuration"
     )
     config_parser.add_argument("path", type=Path)
+    run_parser = subparsers.add_parser("run", help="run the explicitly configured OneBot service")
+    run_parser.add_argument("path", type=Path)
     args = parser.parse_args(argv)
-    if args.command == "check-config":
+    if args.command in {"check-config", "run"}:
         try:
             configured = load_config(args.path)
         except ConfigurationError as error:
             print(f"Configuration error: {error}", file=sys.stderr)
             return 2
+        if args.command == "run":
+            from ginko.application import Application
+
+            try:
+                asyncio.run(Application(configured).serve())
+            except KeyboardInterrupt:
+                return 0
+            except Exception as error:
+                print(f"Service stopped: {type(error).__name__}", file=sys.stderr)
+                return 1
+            return 0
         settings = configured.settings
         print(
             json.dumps(

@@ -11,7 +11,9 @@ from nonebot.adapters.onebot.v11 import (
     Bot,
     Event,
     GroupMessageEvent,
+    Message,
     MessageEvent,
+    MessageSegment,
     PrivateMessageEvent,
 )
 from nonebot.adapters.onebot.v11.config import Config as OneBotConfig
@@ -21,7 +23,7 @@ from pydantic import SecretStr
 
 from ginko.config import RuntimeSettings
 from ginko.core.events import EventEnvelope, SessionRef, TextSegment
-from ginko.storage.messages import MessageStore
+from ginko.storage.messages import Delivery, MessageStore
 
 
 def normalize_message(
@@ -164,6 +166,27 @@ class OneBotIngress:
         )
         self.wake()
         return event_id
+
+
+async def send_text(adapter: OneBotAdapter, delivery: Delivery) -> str:
+    """Send only literal text to the persisted, authorized target and require a receipt."""
+    if not adapter.settings.allows(delivery.session):
+        raise ValueError("delivery is outside the configured allowlist")
+    bot = adapter.bots.get(delivery.session.bot_id)
+    if bot is None:
+        raise RuntimeError("OneBot is disconnected")
+    message = Message(MessageSegment.text(delivery.text))
+    if delivery.session.kind == "private":
+        result = await bot.send_private_msg(user_id=int(delivery.session.chat_id), message=message)
+    else:
+        result = await bot.send_group_msg(group_id=int(delivery.session.chat_id), message=message)
+    if (
+        not isinstance(result, dict)
+        or type(result.get("message_id")) is not int
+        or result["message_id"] == 0
+    ):
+        raise RuntimeError("OneBot returned no valid message receipt")
+    return str(result["message_id"])
 
 
 def register_ingress(

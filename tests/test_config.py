@@ -199,3 +199,11 @@ def test_check_config_missing_credentials_returns_nonzero(config_path, monkeypat
     result = capsys.readouterr()
     assert not result.out
     assert "GINKO_ONEBOT_ACCESS_TOKEN" in result.err
+
+
+def test_run_rejects_invalid_configuration_without_starting_service(config_path, capsys):
+    config_path.write_text("[model\napi_key = 'secret'", encoding="utf-8")
+    assert main(["run", str(config_path)]) == 2
+    result = capsys.readouterr()
+    assert not result.out
+    assert "secret" not in result.err
