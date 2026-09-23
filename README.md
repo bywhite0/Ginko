@@ -44,7 +44,7 @@ src/ginko/
   providers/         单次模型请求、用量校验与预算结算
 docs/
   architecture.md    已落实的契约与限制
-  roadmap.md         按版本划分的范围与验收
+  roadmap.md         按版本划分的功能范围
   persona/           人格资源与审核说明
   licensing.md       代码、人格与第三方组件的许可说明
 tests/               故障、隔离和预算行为测试
@@ -77,9 +77,6 @@ uv run python scripts/verify_release.py
 不包含原始来源资料、凭据、聊天记录或运行数据。
 
 参见 [架构](docs/architecture.md)、[版本路线图](docs/roadmap.md) 和
-[人格资源说明](docs/persona/README.md)。`0.1.0` 的离线验证与维护者审核已完成，
-本次不发 Release、不打标签。
-`0.2.0` 已完成运行配置、OneBot 文本入库、程序式生命周期及统一模型入口的本地验收。
-测试覆盖本机真实 WebSocket、HTTP 与合成模型响应；真实模型费率、用量契约和专用协议端联调仍待验证。
+[人格资源说明](docs/persona/README.md)。`0.1.0` 离线基础工程已完成；`0.2.0` 正在开发。
 
 项目原创代码采用 [AGPL-3.0-only](LICENSE)，人格素材及第三方组件另见 [许可与来源](docs/licensing.md)。

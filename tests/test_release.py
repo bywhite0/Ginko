@@ -102,6 +102,9 @@ def test_artifact_manifest_has_source_resources_and_hashes(source_tree, tmp_path
     ("kind", "unwanted"),
     [
         ("sdist", "ginko-0.1.0/docs/persona/private-source.md"),
+        ("sdist", "ginko-0.1.0/docs/acceptance/0.2.0.md"),
+        ("sdist", "ginko-0.1.0/docs/releases/0.1.0.md"),
+        ("sdist", "ginko-0.1.0/docs/release-plan.md"),
         ("sdist", "ginko-0.1.0/.env"),
         ("sdist", "ginko-0.1.0/config.local.toml"),
         ("sdist", "ginko-0.1.0/data/private.sqlite3"),
