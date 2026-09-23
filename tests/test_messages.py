@@ -25,7 +25,7 @@ def test_redelivery_and_reopening_produce_one_decision(tmp_path, event, now):
         delivery_id = store.complete(claim, now=now, reply="你好")
         assert store.event_status(first) == "done"
         assert store.claim(now) is None
-        delivery = store.claim_delivery()
+        delivery = store.claim_delivery(now)
         assert delivery.delivery_id == delivery_id
         store.confirm_delivery(delivery_id, "receipt-1")
         store.confirm_delivery(delivery_id, "receipt-1")
@@ -45,7 +45,7 @@ def test_expired_worker_is_fenced_from_new_claim(database, event, now):
         store.complete(old, now=later, reply="obsolete reply")
     assert store.claim_delivery() is None
     store.complete(successor, now=later, reply="current reply")
-    assert store.claim_delivery().text == "current reply"
+    assert store.claim_delivery(later).text == "current reply"
 
 
 def test_attempt_counter_survives_reopening_and_redelivery(tmp_path, event, now):
@@ -90,7 +90,7 @@ def test_interrupted_send_becomes_unknown_and_is_never_auto_retried(tmp_path, ev
         store = MessageStore(database)
         add(store, event, now)
         delivery_id = store.complete(store.claim(now), now=now, reply="one message")
-        store.claim_delivery()  # Simulate exit after sending, before receipt.
+        store.claim_delivery(now)  # Simulate exit after sending, before receipt.
     with Database(path) as database:
         store = MessageStore(database)
         assert store.recover_interrupted_deliveries() == 1
@@ -106,7 +106,7 @@ def test_delivery_timeout_and_invalid_confirmation(database, event, now):
     delivery_id = store.complete(store.claim(now), now=now, reply="message")
     with pytest.raises(DeliveryStateError):
         store.confirm_delivery(delivery_id, "not-sent-yet")
-    store.claim_delivery()
+    store.claim_delivery(now)
     store.mark_delivery_unknown(delivery_id)
     assert store.claim_delivery() is None
 
@@ -117,3 +117,60 @@ def test_silence_completes_without_outbound_message(database, event, now):
     assert store.complete(store.claim(now), now=now, reply=None) is None
     assert store.event_status(event.event_id) == "done"
     assert store.claim_delivery() is None
+
+
+def test_rate_limited_delivery_waits_durably_and_retries_with_new_attempt(database, event, now):
+    store = MessageStore(database)
+    add(store, event, now)
+    delivery_id = store.complete(store.claim(now), now=now, reply="message")
+    first = store.claim_delivery(now)
+    assert first.attempts == 1
+    assert store.defer_delivery(delivery_id, retry_at=now + timedelta(seconds=10)) is True
+    assert store.delivery_status(delivery_id) == "pending"
+    assert store.claim_delivery(now + timedelta(seconds=9)) is None
+    second = store.claim_delivery(now + timedelta(seconds=10))
+    assert second.attempts == 2
+    store.confirm_delivery(delivery_id, "receipt-2")
+    assert store.delivery_record(delivery_id).last_error is None
+
+
+def test_rate_limit_past_deadline_becomes_permanent_failure(database, event, now):
+    store = MessageStore(database)
+    add(store, event, now)
+    delivery_id = store.complete(store.claim(now), now=now, reply="message")
+    store.claim_delivery(now)
+    assert store.defer_delivery(delivery_id, retry_at=now + timedelta(hours=1)) is False
+    assert store.delivery_status(delivery_id) == "failed"
+    assert store.delivery_record(delivery_id).last_error == "delivery_deadline"
+
+
+def test_expired_pending_delivery_is_failed_without_platform_call(database, event, now):
+    store = MessageStore(database)
+    add(store, event, now, max_attempts=1)
+    delivery_id = store.complete(store.claim(now), now=now, reply="message")
+    assert store.claim_delivery(now + timedelta(hours=1, seconds=1)) is None
+    assert store.delivery_status(delivery_id) == "failed"
+
+
+def test_unknown_delivery_can_be_queried_and_manually_failed(database, event, now):
+    store = MessageStore(database)
+    add(store, event, now)
+    delivery_id = store.complete(store.claim(now), now=now, reply="message")
+    store.claim_delivery(now)
+    store.mark_delivery_unknown(delivery_id, reason="transport_error")
+    records = store.list_delivery_records(status="unknown")
+    assert [record.delivery_id for record in records] == [delivery_id]
+    assert records[0].last_error == "transport_error"
+    store.reconcile_delivery(delivery_id, "failed")
+    assert store.delivery_status(delivery_id) == "failed"
+    assert store.claim_delivery(now) is None
+
+
+def test_unknown_delivery_can_be_manually_confirmed_with_receipt(database, event, now):
+    store = MessageStore(database)
+    add(store, event, now)
+    delivery_id = store.complete(store.claim(now), now=now, reply="message")
+    store.claim_delivery(now)
+    store.mark_delivery_unknown(delivery_id)
+    store.reconcile_delivery(delivery_id, "sent", platform_message_id="manual-receipt")
+    assert store.delivery_status(delivery_id) == "sent"

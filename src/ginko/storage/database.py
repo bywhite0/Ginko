@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS inbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,9 +32,13 @@ CREATE TABLE IF NOT EXISTS outbox (
     text TEXT NOT NULL CHECK(length(text) > 0),
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'sending', 'sent', 'unknown', 'failed')),
-    platform_message_id TEXT
+    platform_message_id TEXT,
+    expires_at REAL NOT NULL,
+    next_attempt_at REAL NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    last_error TEXT
 );
-CREATE INDEX IF NOT EXISTS outbox_work ON outbox(status, seq);
+CREATE INDEX IF NOT EXISTS outbox_work ON outbox(status, next_attempt_at, seq);
 CREATE TABLE IF NOT EXISTS budget (
     operation_id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,
@@ -66,13 +70,46 @@ class Database:
         # Full synchronization favors durability for small local workloads.
         self.connection.execute("PRAGMA synchronous = FULL")
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA_VERSION):
+        if version not in (0, 1, SCHEMA_VERSION):
             self.close()
             raise ValueError(f"unsupported database schema version: {version}")
         if version == 0:
             self.connection.executescript(
                 f"BEGIN IMMEDIATE;\n{SCHEMA}\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
             )
+        elif version == 1:
+            self._migrate_v1_to_v2()
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Add durable delivery scheduling fields without rewriting existing messages."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self.connection.execute(
+                "ALTER TABLE outbox ADD COLUMN expires_at REAL NOT NULL DEFAULT 0"
+            )
+            self.connection.execute(
+                "ALTER TABLE outbox ADD COLUMN next_attempt_at REAL NOT NULL DEFAULT 0"
+            )
+            self.connection.execute(
+                "ALTER TABLE outbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            )
+            self.connection.execute("ALTER TABLE outbox ADD COLUMN last_error TEXT")
+            self.connection.execute(
+                """UPDATE outbox SET expires_at = (
+                    SELECT inbox.expires_at FROM inbox WHERE inbox.event_id = outbox.event_id
+                ) WHERE expires_at = 0"""
+            )
+            self.connection.execute("DROP INDEX IF EXISTS outbox_work")
+            self.connection.execute(
+                "CREATE INDEX outbox_work ON outbox(status, next_attempt_at, seq)"
+            )
+            self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        except BaseException:
+            self.connection.rollback()
+            self.close()
+            raise
+        else:
+            self.connection.commit()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

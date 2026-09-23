@@ -27,7 +27,12 @@ from ginko.adapters.onebot import (
 from ginko.config import RuntimeSettings
 from ginko.core.events import SessionRef
 from ginko.storage.database import Database
-from ginko.storage.messages import Delivery, MessageStore
+from ginko.storage.messages import (
+    Delivery,
+    DeliveryRateLimited,
+    MessageStore,
+    PermanentDeliveryError,
+)
 
 
 @pytest.fixture
@@ -223,7 +228,7 @@ def test_redelivery_after_decision_does_not_recreate_outbox(
     first_id = ingress.receive(parse(payload), received_at=now)
     claim = store.claim(now)
     delivery_id = store.complete(claim, now=now, reply="synthetic test response")
-    assert store.claim_delivery().delivery_id == delivery_id
+    assert store.claim_delivery(now).delivery_id == delivery_id
     if delivery_state == "sent":
         store.confirm_delivery(delivery_id, "test-receipt-1")
     else:
@@ -340,4 +345,25 @@ def test_send_text_rejects_target_outside_allowlist(settings):
     adapter = SimpleNamespace(settings=settings, bots={})
     delivery = Delivery(uuid4(), uuid4(), session, "literal text")
     with pytest.raises(ValueError, match="allowlist"):
+        asyncio.run(send_text(adapter, delivery))
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        ({"status": "failed", "retcode": 100}, PermanentDeliveryError),
+        ({"retcode": 100}, PermanentDeliveryError),
+        ({"status": "failed", "retcode": 429, "retry_after": 2}, DeliveryRateLimited),
+    ],
+)
+def test_send_text_classifies_explicit_platform_failures(settings, result, error):
+    session = SessionRef(platform="qq", bot_id="10000", kind="private", chat_id="20001")
+
+    class FakeBot:
+        async def send_private_msg(self, **data):
+            return result
+
+    adapter = SimpleNamespace(settings=settings, bots={"10000": FakeBot()})
+    delivery = Delivery(uuid4(), uuid4(), session, "literal text")
+    with pytest.raises(error):
         asyncio.run(send_text(adapter, delivery))

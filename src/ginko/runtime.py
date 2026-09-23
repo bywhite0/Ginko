@@ -4,13 +4,20 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from ginko.adapters.onebot import OneBotIngress
 from ginko.config import RuntimeConfig
 from ginko.instance import InstanceLock
 from ginko.storage.database import Database
-from ginko.storage.messages import Delivery, EventClaim, MessageStore, StaleClaimError
+from ginko.storage.messages import (
+    Delivery,
+    DeliveryRateLimited,
+    EventClaim,
+    MessageStore,
+    PermanentDeliveryError,
+    StaleClaimError,
+)
 
 logger = logging.getLogger(__name__)
 Decision = Callable[[EventClaim], Awaitable[str | None]]
@@ -51,7 +58,9 @@ class Runtime:
         try:
             self.database = Database(self.config.data_dir / "ginko.sqlite3")
             self.store = MessageStore(self.database)
-            recovered = self.store.recover_interrupted_deliveries()
+            recovered = self.store.recover_interrupted_deliveries(
+                agent_id=self.config.settings.agent_id
+            )
             logger.info("recovered_unknown_deliveries count=%d", recovered)
             self.ingress = OneBotIngress(self.config.settings, self.store, self._wake_worker.set)
             self._tasks = [
@@ -140,26 +149,43 @@ class Runtime:
         while not self._stopping and not self._failed.is_set():
             self._wake_sender.clear()
             delivery = (
-                self.store.claim_delivery(agent_id=settings.agent_id) if self._connected else None
+                self.store.claim_delivery(datetime.now(UTC), agent_id=settings.agent_id)
+                if self._connected
+                else None
             )
             if delivery is None:
                 await self._wait(self._wake_sender)
                 continue
             if not settings.allows(delivery.session):
-                self.store.fail_delivery(delivery.delivery_id)
+                self.store.fail_delivery(delivery.delivery_id, reason="unauthorized_target")
+                continue
+            remaining = (delivery.expires_at - datetime.now(UTC)).total_seconds()
+            if remaining <= 0:
+                self.store.fail_delivery(delivery.delivery_id, reason="delivery_deadline")
                 continue
             try:
-                async with asyncio.timeout(settings.onebot.api_timeout_seconds) as deadline:
+                async with asyncio.timeout(
+                    min(settings.onebot.api_timeout_seconds, remaining)
+                ) as deadline:
                     receipt = await self.send(delivery)
                 if deadline.expired():
-                    self.store.mark_delivery_unknown(delivery.delivery_id)
+                    self.store.mark_delivery_unknown(delivery.delivery_id, reason="timeout")
                 else:
                     self.store.confirm_delivery(delivery.delivery_id, receipt)
+            except DeliveryRateLimited as error:
+                delay = max(0.5, min(error.retry_after_seconds, remaining))
+                retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+                self.store.defer_delivery(
+                    delivery.delivery_id, retry_at=retry_at, reason="rate_limited"
+                )
+                self._wake_sender.set()
+            except PermanentDeliveryError as error:
+                self.store.fail_delivery(delivery.delivery_id, reason=error.code)
             except TimeoutError:
-                self.store.mark_delivery_unknown(delivery.delivery_id)
+                self.store.mark_delivery_unknown(delivery.delivery_id, reason="timeout")
             except BaseException:
                 # Cancellation and unexpected transport failures are equally ambiguous.
-                self.store.mark_delivery_unknown(delivery.delivery_id)
+                self.store.mark_delivery_unknown(delivery.delivery_id, reason="unknown_error")
                 raise
             await asyncio.sleep(0)
 

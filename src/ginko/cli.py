@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import UUID
 
 from ginko import __version__
 from ginko.config import ConfigurationError, load_config
@@ -14,7 +15,7 @@ from ginko.core.events import EventEnvelope, SessionRef, TextSegment
 from ginko.persona import load_ginko
 from ginko.storage.budget import BudgetLedger, BudgetLimits
 from ginko.storage.database import Database
-from ginko.storage.messages import MessageStore
+from ginko.storage.messages import DeliveryStateError, MessageStore
 
 
 def smoke() -> dict[str, object]:
@@ -47,7 +48,7 @@ def smoke() -> dict[str, object]:
             ledger.reserve("offline:1", "smoke", 100, now=now)
             ledger.settle("offline:1", 0)  # Synthetic accounting, no paid call.
             delivery_id = store.complete(claim, now=now, reply="[offline] storage check passed")
-            delivery = store.claim_delivery()
+            delivery = store.claim_delivery(now)
             if delivery is None or delivery_id is None:
                 raise RuntimeError("outbound intent was lost")
             store.confirm_delivery(delivery_id, "synthetic-receipt:1")
@@ -78,6 +79,22 @@ def main(argv: list[str] | None = None) -> int:
     config_parser.add_argument("path", type=Path)
     run_parser = subparsers.add_parser("run", help="run the explicitly configured OneBot service")
     run_parser.add_argument("path", type=Path)
+    deliveries_parser = subparsers.add_parser(
+        "deliveries", help="inspect durable delivery states without starting the service"
+    )
+    deliveries_parser.add_argument("database", type=Path)
+    deliveries_parser.add_argument("delivery_id", nargs="?")
+    deliveries_parser.add_argument(
+        "--status", choices=["pending", "sending", "sent", "unknown", "failed"]
+    )
+    reconcile_parser = subparsers.add_parser(
+        "reconcile-delivery", help="resolve one unknown delivery after manual platform checking"
+    )
+    reconcile_parser.add_argument("database", type=Path)
+    reconcile_parser.add_argument("delivery_id")
+    reconcile_parser.add_argument("outcome", choices=["sent", "failed"])
+    reconcile_parser.add_argument("--receipt", help="platform message receipt when outcome is sent")
+    reconcile_parser.add_argument("--reason", default="manual_reconciliation")
     args = parser.parse_args(argv)
     if args.command in {"check-config", "run"}:
         try:
@@ -116,6 +133,42 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+    elif args.command == "deliveries":
+        if args.delivery_id is not None and args.status is not None:
+            print("Delivery command failed: conflicting_filters", file=sys.stderr)
+            return 2
+        try:
+            if not args.database.is_file():
+                raise FileNotFoundError(args.database)
+            with Database(args.database) as database:
+                store = MessageStore(database)
+                records = (
+                    (store.delivery_record(UUID(args.delivery_id)),)
+                    if args.delivery_id is not None
+                    else store.list_delivery_records(status=args.status)
+                )
+                print(json.dumps([_delivery_record_json(record) for record in records], indent=2))
+        except (FileNotFoundError, KeyError, ValueError, DeliveryStateError, OSError):
+            print("Delivery command failed: invalid_query", file=sys.stderr)
+            return 2
+    elif args.command == "reconcile-delivery":
+        try:
+            if not args.database.is_file():
+                raise FileNotFoundError(args.database)
+            with Database(args.database) as database:
+                store = MessageStore(database)
+                store.reconcile_delivery(
+                    UUID(args.delivery_id),
+                    args.outcome,
+                    platform_message_id=args.receipt,
+                    reason=args.reason,
+                )
+                print(
+                    json.dumps(_delivery_record_json(store.delivery_record(UUID(args.delivery_id))))
+                )
+        except (FileNotFoundError, KeyError, ValueError, DeliveryStateError, OSError):
+            print("Delivery command failed: invalid_reconciliation", file=sys.stderr)
+            return 2
     elif args.command == "smoke":
         print(json.dumps(smoke(), ensure_ascii=False, indent=2))
     elif args.command == "doctor":
@@ -138,3 +191,17 @@ def main(argv: list[str] | None = None) -> int:
         persona = load_ginko()
         print(persona.identity + "\n" + persona.style)
     return 0
+
+
+def _delivery_record_json(record) -> dict[str, object]:
+    return {
+        "delivery_id": str(record.delivery_id),
+        "event_id": str(record.event_id),
+        "session": record.session.model_dump(mode="json"),
+        "status": record.status,
+        "attempts": record.attempts,
+        "expires_at": record.expires_at.isoformat(),
+        "next_attempt_at": record.next_attempt_at.isoformat(),
+        "platform_message_id": record.platform_message_id,
+        "last_error": record.last_error,
+    }

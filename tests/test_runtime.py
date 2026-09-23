@@ -16,7 +16,12 @@ from ginko.instance import InstanceLock, InstanceRunningError
 from ginko.persona import load_ginko
 from ginko.runtime import RejectActivity, RetryActivity, Runtime
 from ginko.storage.database import Database
-from ginko.storage.messages import MessageStore, StaleClaimError
+from ginko.storage.messages import (
+    DeliveryRateLimited,
+    MessageStore,
+    PermanentDeliveryError,
+    StaleClaimError,
+)
 
 
 @pytest.fixture
@@ -321,6 +326,61 @@ def test_runtime_applies_send_timeout_even_if_transport_suppresses_cancellation(
                     == "unknown"
                 )
             )
+
+    asyncio.run(run())
+
+
+def test_rate_limited_send_is_persistently_deferred_and_retried(config):
+    async def run():
+        attempts = []
+
+        async def send(delivery):
+            attempts.append(delivery.attempts)
+            if len(attempts) == 1:
+                raise DeliveryRateLimited(0.01)
+            return "receipt-after-wait"
+
+        async with Runtime(config, reply, send) as runtime:
+            runtime.set_connected(True)
+            event = ingest(runtime.store, seconds=30)
+            await until(
+                lambda: (
+                    runtime.database.connection.execute("SELECT status FROM outbox").fetchone()
+                    is not None
+                    and runtime.database.connection.execute("SELECT status FROM outbox").fetchone()[
+                        0
+                    ]
+                    == "sent"
+                )
+            )
+            assert runtime.store.event_status(event.event_id) == "done"
+            assert attempts == [1, 2]
+
+    asyncio.run(run())
+
+
+def test_permanent_send_rejection_is_failed_without_retry(config):
+    async def run():
+        attempts = []
+
+        async def send(delivery):
+            attempts.append(delivery.delivery_id)
+            raise PermanentDeliveryError("onebot_rejected")
+
+        async with Runtime(config, reply, send) as runtime:
+            runtime.set_connected(True)
+            ingest(runtime.store)
+            await until(
+                lambda: (
+                    runtime.database.connection.execute("SELECT status FROM outbox").fetchone()
+                    is not None
+                    and runtime.database.connection.execute("SELECT status FROM outbox").fetchone()[
+                        0
+                    ]
+                    == "failed"
+                )
+            )
+            assert len(attempts) == 1
 
     asyncio.run(run())
 

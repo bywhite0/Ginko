@@ -23,7 +23,12 @@ from pydantic import SecretStr
 
 from ginko.config import RuntimeSettings
 from ginko.core.events import EventEnvelope, SessionRef, TextSegment
-from ginko.storage.messages import Delivery, MessageStore
+from ginko.storage.messages import (
+    Delivery,
+    DeliveryRateLimited,
+    MessageStore,
+    PermanentDeliveryError,
+)
 
 
 def normalize_message(
@@ -180,6 +185,14 @@ async def send_text(adapter: OneBotAdapter, delivery: Delivery) -> str:
         result = await bot.send_private_msg(user_id=int(delivery.session.chat_id), message=message)
     else:
         result = await bot.send_group_msg(group_id=int(delivery.session.chat_id), message=message)
+    if isinstance(result, dict) and (
+        result.get("status") == "failed"
+        or (type(result.get("retcode")) is int and result["retcode"] != 0)
+    ):
+        retry_after = result.get("retry_after")
+        if type(retry_after) in (int, float) and retry_after >= 0:
+            raise DeliveryRateLimited(retry_after)
+        raise PermanentDeliveryError("onebot_rejected")
     if (
         not isinstance(result, dict)
         or type(result.get("message_id")) is not int
