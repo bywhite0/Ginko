@@ -13,7 +13,9 @@ from uuid import UUID
 from ginko import __version__
 from ginko.config import ConfigurationError, load_config
 from ginko.core.events import EventEnvelope, SessionRef, TextSegment
+from ginko.instance import InstanceLock, InstanceRunningError
 from ginko.persona import load_ginko
+from ginko.storage.backup import BackupError, backup_database, restore_database
 from ginko.storage.budget import BudgetLedger, BudgetLimits
 from ginko.storage.database import Database
 from ginko.storage.messages import DeliveryStateError, MessageStore
@@ -102,7 +104,19 @@ def main(argv: list[str] | None = None) -> int:
     attempts_parser.add_argument("database", type=Path)
     attempts_parser.add_argument("operation_id", nargs="?")
     attempts_parser.add_argument("--trace-id")
+    backup_parser = subparsers.add_parser(
+        "backup", help="copy the stopped instance's database into a new standalone file"
+    )
+    backup_parser.add_argument("data_dir", type=Path)
+    backup_parser.add_argument("destination", type=Path)
+    restore_parser = subparsers.add_parser(
+        "restore", help="place a verified backup into a data directory without a database"
+    )
+    restore_parser.add_argument("backup", type=Path)
+    restore_parser.add_argument("data_dir", type=Path)
     args = parser.parse_args(argv)
+    if args.command in {"backup", "restore"}:
+        return _backup_command(args)
     if args.command in {"check-config", "run"}:
         try:
             configured = load_config(args.path)
@@ -217,6 +231,33 @@ def main(argv: list[str] | None = None) -> int:
         persona = load_ginko()
         print(persona.identity + "\n" + persona.style)
     return 0
+
+
+def _backup_command(args: argparse.Namespace) -> int:
+    """Hold the runtime lock so no service writes while the copy is taken or placed."""
+    database = args.data_dir / "ginko.sqlite3"
+    try:
+        if args.command == "backup":
+            if not database.is_file():
+                raise BackupError("missing_database")
+            with InstanceLock(args.data_dir):
+                result = backup_database(database, args.destination)
+            status = "backed_up"
+        else:
+            with InstanceLock(args.data_dir):
+                result = restore_database(args.backup, database)
+            status = "restored"
+    except InstanceRunningError:
+        code = "instance_running"
+    except BackupError as error:
+        code = error.code
+    except (OSError, sqlite3.Error):
+        code = "io_error"
+    else:
+        print(json.dumps({"status": status} | result, indent=2))
+        return 0
+    print(f"{args.command.capitalize()} command failed: {code}", file=sys.stderr)
+    return 2
 
 
 def _delivery_record_json(record) -> dict[str, object]:

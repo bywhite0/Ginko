@@ -10,7 +10,8 @@ Ginko 是一个以百生吟子为初版人格、面向多聊天平台的持续�
 结构化人格决策、持久模型尝试审计及配置驱动的聊天运行命令。
 已完成测试协议端与真实模型的最小文本往返；服务商账单核对、人格人工评审、候选观察、
 自动记忆抽取和自主运行仍待完成。测试协议端不代表真实聊天平台的兼容性已验证。
-完整应用已通过合成模型与测试协议端上的 HTTP/WebSocket 故障演练，包括进程崩溃和回执丢失。
+完整应用已通过合成模型与测试协议端上的 HTTP/WebSocket 故障演练，包括进程崩溃和回执丢失；
+停机备份与恢复已在 schema 3 验收数据库副本上演练。
 这不是已经上线的聊天 Bot，离线 smoke 只验证存储行为，不生成角色回答，也不发送平台消息。
 
 ## 开始
@@ -43,13 +44,22 @@ uv run ginko model-attempts data/ginko.sqlite3 <operation_id>
 `unknown` 并继续保留预算；单独查询不会触发恢复。`settled` 仅表示费用已结算，
 结果码 `accepted` 表示通过模型响应检查，业务校验和平台投递状态需分别查看。
 
+停止服务后可备份数据目录，恢复只写入尚无数据库的目录；服务运行时两者都会拒绝：
+
+```powershell
+uv run ginko backup data backups/ginko-20260925.sqlite3
+uv run ginko restore backups/ginko-20260925.sqlite3 data-restored
+```
+
+两者输出副本的 SHA-256 与状态摘要，不含消息正文。恢复不迁移 schema，也不改变投递与预算状态。
+
 ## 结构
 
 ```text
 src/ginko/
   adapters/          NoneBot / OneBot V11 文本归一化与入库
   core/              平台无关事件、记忆受众、概率换算
-  storage/           SQLite 事件、投递、预算
+  storage/           SQLite 事件、投递、预算与一致性备份
   personas/ginko/    版本化身份、语气与静态知识
   persona.py         人格资源加载
   cli.py             离线检查、投递查询与服务入口
