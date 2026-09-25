@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import sqlite3
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -95,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     reconcile_parser.add_argument("outcome", choices=["sent", "failed"])
     reconcile_parser.add_argument("--receipt", help="platform message receipt when outcome is sent")
     reconcile_parser.add_argument("--reason", default="manual_reconciliation")
+    attempts_parser = subparsers.add_parser(
+        "model-attempts", help="inspect durable model attempt metadata without prompts"
+    )
+    attempts_parser.add_argument("database", type=Path)
+    attempts_parser.add_argument("operation_id", nargs="?")
+    attempts_parser.add_argument("--trace-id")
     args = parser.parse_args(argv)
     if args.command in {"check-config", "run"}:
         try:
@@ -169,6 +176,24 @@ def main(argv: list[str] | None = None) -> int:
         except (FileNotFoundError, KeyError, ValueError, DeliveryStateError, OSError):
             print("Delivery command failed: invalid_reconciliation", file=sys.stderr)
             return 2
+    elif args.command == "model-attempts":
+        if args.operation_id is not None and args.trace_id is not None:
+            print("Model attempt command failed: conflicting_filters", file=sys.stderr)
+            return 2
+        try:
+            if not args.database.is_file():
+                raise FileNotFoundError(args.database)
+            with Database(args.database) as database:
+                ledger = BudgetLedger(database, BudgetLimits(0, 0))
+                records = (
+                    (ledger.model_attempt(args.operation_id),)
+                    if args.operation_id is not None
+                    else ledger.list_model_attempts(trace_id=args.trace_id)
+                )
+                print(json.dumps([_model_attempt_json(record) for record in records], indent=2))
+        except (KeyError, ValueError, OSError, sqlite3.Error):
+            print("Model attempt command failed: invalid_query", file=sys.stderr)
+            return 2
     elif args.command == "smoke":
         print(json.dumps(smoke(), ensure_ascii=False, indent=2))
     elif args.command == "doctor":
@@ -204,4 +229,23 @@ def _delivery_record_json(record) -> dict[str, object]:
         "next_attempt_at": record.next_attempt_at.isoformat(),
         "platform_message_id": record.platform_message_id,
         "last_error": record.last_error,
+    }
+
+
+def _model_attempt_json(record) -> dict[str, object]:
+    return {
+        "operation_id": record.operation_id,
+        "trace_id": record.trace_id,
+        "budget_status": record.budget_status,
+        "status": record.status,
+        "reserved_microusd": record.reserved_microusd,
+        "actual_microusd": record.actual_microusd,
+        "prompt_tokens": record.prompt_tokens,
+        "completion_tokens": record.completion_tokens,
+        "total_tokens": record.total_tokens,
+        "cached_prompt_tokens": record.cached_prompt_tokens,
+        "reasoning_tokens": record.reasoning_tokens,
+        "outcome_code": record.outcome_code,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
     }

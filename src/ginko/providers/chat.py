@@ -12,7 +12,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 
 from ginko.config import ModelSettings
-from ginko.storage.budget import BudgetLedger
+from ginko.storage.budget import BudgetLedger, BudgetOverrunError
 
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES = 1_000_000
@@ -74,11 +74,15 @@ class TokenUsage(BaseModel):
 
     @property
     def cached_tokens(self) -> int:
+        return self.reported_cached_tokens or 0
+
+    @property
+    def reported_cached_tokens(self) -> int | None:
         if self.prompt_cache_hit_tokens is not None:
             return self.prompt_cache_hit_tokens
         if self.prompt_tokens_details is not None:
-            return self.prompt_tokens_details.cached_tokens or 0
-        return 0
+            return self.prompt_tokens_details.cached_tokens
+        return None
 
 
 @dataclass(frozen=True)
@@ -153,7 +157,11 @@ class ChatClient:
         # Every explicit retry receives a fresh UUID and an independent reservation.
         operation_id = f"{trace_id}:{uuid4()}"
         self.ledger.reserve(
-            operation_id, "reply", self.settings.reservation_microusd, now=datetime.now(UTC)
+            operation_id,
+            "reply",
+            self.settings.reservation_microusd,
+            now=datetime.now(UTC),
+            trace_id=str(trace_id),
         )
         logger.info(
             "model_reserved trace_id=%s operation_id=%s reserved_microusd=%d",
@@ -161,6 +169,25 @@ class ChatClient:
             operation_id,
             self.settings.reservation_microusd,
         )
+        try:
+            return await self._complete_reserved(payload, operation_id=operation_id)
+        except ModelCallError as error:
+            self.ledger.record_model_outcome(operation_id, error.code)
+            raise
+        except asyncio.CancelledError:
+            self.ledger.record_model_outcome(operation_id, "cancelled")
+            logger.warning("model_unknown operation_id=%s cause=cancelled", operation_id)
+            raise
+        except ProviderContractError:
+            self.ledger.record_model_outcome(operation_id, "provider_contract")
+            raise
+        except BudgetOverrunError:
+            self.ledger.record_model_outcome(operation_id, "budget_overrun")
+            raise
+
+    async def _complete_reserved(
+        self, payload: dict[str, object], *, operation_id: str
+    ) -> ModelReply:
         try:
             # HTTPX timeouts bound individual I/O phases; this also bounds the whole call.
             async with asyncio.timeout(self.settings.timeout_seconds):
@@ -178,7 +205,6 @@ class ChatClient:
                         body.extend(chunk)
                     status = response.status_code
         except asyncio.CancelledError:
-            logger.warning("model_unknown operation_id=%s cause=cancelled", operation_id)
             raise
         except (TimeoutError, httpx.TimeoutException):
             raise ModelCallError("timeout", operation_id=operation_id, retryable=True) from None
@@ -231,7 +257,17 @@ class ChatClient:
         ) // 1_000_000
         # Settle before inspecting generated content. Refusal, empty/truncated replies and
         # downstream JSON/business-validation failures must not erase billed usage.
-        self.ledger.settle(operation_id, cost)
+        self.ledger.settle(
+            operation_id,
+            cost,
+            usage=(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens),
+            cached_prompt_tokens=usage.reported_cached_tokens,
+            reasoning_tokens=(
+                usage.completion_tokens_details.reasoning_tokens
+                if usage.completion_tokens_details is not None
+                else None
+            ),
+        )
         logger.info(
             "model_settled operation_id=%s input_tokens=%d output_tokens=%d cost_microusd=%d",
             operation_id,
@@ -263,6 +299,7 @@ class ChatClient:
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise ModelCallError("empty_reply", operation_id=operation_id, retryable=True)
+        self.ledger.record_model_outcome(operation_id, "accepted")
         return ModelReply(content, operation_id, usage, cost)
 
     async def close(self) -> None:

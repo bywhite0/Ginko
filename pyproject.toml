@@ -41,6 +41,8 @@ include = [
   "/src/ginko/personas/ginko/style.md",
   "/src/ginko/personas/ginko/world.md",
   "/tests/**/*.py",
+  "/tests/fixtures/schema_v1.sql",
+  "/tests/fixtures/schema_v2.sql",
   "/scripts/verify_release.py",
   "/pyproject.toml",
   "/uv.lock",

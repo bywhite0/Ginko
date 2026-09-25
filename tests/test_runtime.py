@@ -15,6 +15,7 @@ from ginko.core.events import EventEnvelope, SessionRef, TextSegment
 from ginko.instance import InstanceLock, InstanceRunningError
 from ginko.persona import load_ginko
 from ginko.runtime import RejectActivity, RetryActivity, Runtime
+from ginko.storage.budget import BudgetLedger, BudgetLimits
 from ginko.storage.database import Database
 from ginko.storage.messages import (
     DeliveryRateLimited,
@@ -109,11 +110,22 @@ def test_second_runtime_cannot_recover_live_sender_and_lock_is_released(config):
             claim = first.store.claim(datetime.now(UTC))
             delivery_id = first.store.complete(claim, now=datetime.now(UTC), reply="hello")
             first.store.claim_delivery()
+            ledger = BudgetLedger(first.database, BudgetLimits(100, 100))
+            ledger.reserve("live-call", "chat", 100, now=datetime.now(UTC), trace_id="trace")
             with pytest.raises(InstanceRunningError):
                 await Runtime(config, reply, receipt).start()
+            assert ledger.model_attempt("live-call").status == "reserved"
+            # A query connection must not recover another process's in-flight attempt.
+            with Database(config.data_dir / "ginko.sqlite3") as observer:
+                record = BudgetLedger(observer, BudgetLimits(0, 0)).model_attempt("live-call")
+                assert record.status == "reserved"
             assert first.store.delivery_status(delivery_id) == "sending"
             assert first.store.event_status(event.event_id) == "done"
         async with Runtime(config, reply, receipt) as successor:
+            record = BudgetLedger(successor.database, BudgetLimits(0, 0)).model_attempt("live-call")
+            assert record.status == "unknown"
+            assert record.budget_status == "reserved"
+            assert record.outcome_code == "interrupted"
             assert successor.store.delivery_status(delivery_id) == "unknown"
             successor.set_connected(True)
             await asyncio.sleep(0.02)

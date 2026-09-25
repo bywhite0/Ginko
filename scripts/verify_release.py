@@ -34,6 +34,8 @@ SDIST_FILES = {
     "docs/licensing.md",
     ".python-version",
     "scripts/verify_release.py",
+    "tests/fixtures/schema_v1.sql",
+    "tests/fixtures/schema_v2.sql",
 } | LICENSE_FILES
 DIST_INFO_FILES = {"METADATA", "WHEEL", "entry_points.txt", "RECORD"}
 

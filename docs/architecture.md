@@ -65,8 +65,9 @@ SQLite 全部在同一事件循环线程使用，网络等待不持有事务；�
 
 SQLite 使用 WAL、foreign_keys 和 synchronous=FULL。每个存储实例拥有一条连接，不跨线程共享连接。
 写操作使用短 `BEGIN IMMEDIATE` 事务，网络操作不得置于事务内。
-当前 schema 为 2；打开 schema 1 时只执行一次受控迁移，为 outbox 补充截止时间、尝试次数、
-下一次尝试时间和安全错误码。其他版本拒绝打开，迁移不会删除已有事件或投递记录。
+当前 schema 为 3；打开 schema 1 时先为 outbox 补充截止时间、尝试次数、下一次尝试时间和安全错误码，
+再迁移至 schema 3；schema 2 只新增模型尝试审计表。各次迁移均在事务中更新版本，失败回滚。
+已有事件、投递和预算账目保持不变，旧账目不补造缺失的用量或结果记录。其他版本拒绝打开。
 
 ```mermaid
 stateDiagram-v2
@@ -117,6 +118,18 @@ source_event_ids 保存证据依赖；confidence 与 importance 分开，反思�
 结果未知时保持 reserved，重启不释放；下一次尝试使用新 ID 和新预留。
 发生超出预留的实际支出时，先记录支出再抛 BudgetOverrunError，后续额度检查能看到真实账单。
 预算上限由维护者配置，不能把 BudgetLimits 构造权限或账本写权限交给 Agent。
+
+模型调用同时持久化 `model_attempts`：trace_id、operation_id、预留/结算状态、token 总计、
+服务明确返回的缓存命中和推理子计数、费用、结果码及时间。预留与建档、费用与用量更新均使用同一事务；
+重复结算只能提供相同证据，已记录的调用结果不能覆盖。审计不存储提示词、回答或服务端错误正文。
+`ginko model-attempts <database>` 支持单个 operation_id 或 `--trace-id` 查询。
+
+审计状态与预算状态分开：已知失败或取消但用量不明时，审计为 `unknown`、预算仍为 `reserved`；
+只有确认请求未开始的取消才会释放预算。打开数据库或查询不会修改在途尝试。
+runtime 取得数据目录独占锁后，把遗留 `reserved` 尝试标记为 `unknown/interrupted`；
+已结算但尚无响应检查结果的尝试保留费用和用量，结果记为 `interrupted`。已有结果不变。
+该恢复不释放预算。审计写入故障向上传播，由 runtime 停止接入并退出。
+`accepted` 只代表模型入口接受响应，不代表业务决策有效或平台发送成功。
 
 `providers/chat.py` 是非流式 Chat Completions 的统一入口。一条 HTTP 请求对应一次预留，
 operation_id 包含入站 trace_id 和独立尝试 UUID；HTTP 客户端不自动重试或跟随重定向。

@@ -6,8 +6,27 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 2
-SCHEMA = """
+SCHEMA_VERSION = 3
+MODEL_ATTEMPTS_TABLE = """CREATE TABLE model_attempts (
+    operation_id TEXT PRIMARY KEY REFERENCES budget(operation_id),
+    trace_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved'
+        CHECK(status IN ('reserved', 'settled', 'unknown', 'cancelled')),
+    prompt_tokens INTEGER CHECK(prompt_tokens IS NULL OR prompt_tokens >= 1),
+    completion_tokens INTEGER CHECK(completion_tokens IS NULL OR completion_tokens >= 0),
+    total_tokens INTEGER CHECK(total_tokens IS NULL OR total_tokens >= 1),
+    cached_prompt_tokens INTEGER CHECK(
+        cached_prompt_tokens IS NULL OR cached_prompt_tokens BETWEEN 0 AND prompt_tokens
+    ),
+    reasoning_tokens INTEGER CHECK(
+        reasoning_tokens IS NULL OR reasoning_tokens BETWEEN 0 AND completion_tokens
+    ),
+    outcome_code TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+)"""
+MODEL_ATTEMPTS_INDEX = "CREATE INDEX model_attempts_trace ON model_attempts(trace_id, created_at)"
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS inbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL UNIQUE,
@@ -50,6 +69,8 @@ CREATE TABLE IF NOT EXISTS budget (
 );
 CREATE INDEX IF NOT EXISTS budget_day ON budget(day, status);
 CREATE INDEX IF NOT EXISTS budget_month ON budget(month, status);
+{MODEL_ATTEMPTS_TABLE};
+{MODEL_ATTEMPTS_INDEX};
 """
 
 
@@ -70,7 +91,7 @@ class Database:
         # Full synchronization favors durability for small local workloads.
         self.connection.execute("PRAGMA synchronous = FULL")
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, SCHEMA_VERSION):
+        if version not in (0, 1, 2, SCHEMA_VERSION):
             self.close()
             raise ValueError(f"unsupported database schema version: {version}")
         if version == 0:
@@ -79,6 +100,9 @@ class Database:
             )
         elif version == 1:
             self._migrate_v1_to_v2()
+            self._migrate_v2_to_v3()
+        elif version == 2:
+            self._migrate_v2_to_v3()
 
     def _migrate_v1_to_v2(self) -> None:
         """Add durable delivery scheduling fields without rewriting existing messages."""
@@ -103,6 +127,20 @@ class Database:
             self.connection.execute(
                 "CREATE INDEX outbox_work ON outbox(status, next_attempt_at, seq)"
             )
+            self.connection.execute("PRAGMA user_version = 2")
+        except BaseException:
+            self.connection.rollback()
+            self.close()
+            raise
+        else:
+            self.connection.commit()
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add durable model-attempt metadata without changing budget totals."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self.connection.execute(MODEL_ATTEMPTS_TABLE)
+            self.connection.execute(MODEL_ATTEMPTS_INDEX)
             self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except BaseException:
             self.connection.rollback()

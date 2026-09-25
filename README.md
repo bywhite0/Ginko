@@ -7,7 +7,7 @@ Ginko 是一个以百生吟子为初版人格、面向多聊天平台的持续�
 
 **当前阶段：0.2.0 开发中。** 已实现统一文本事件、SQLite inbox/outbox、带租约的活动领取、
 记忆受众策略、持久预算账本、运行配置检查、OneBot 文本入库、单实例生命周期、有预算约束的模型入口、
-结构化人格决策及配置驱动的聊天运行命令。
+结构化人格决策、持久模型尝试审计及配置驱动的聊天运行命令。
 真实模型与协议端联调、端到端故障演练、自动记忆抽取和自主运行仍待完成。
 这不是已经上线的聊天 Bot，离线 smoke 只验证存储行为，不生成角色回答，也不发送平台消息。
 
@@ -27,6 +27,19 @@ uv run ginko persona
 0.2.0 的运行配置使用 `config.example.toml` 作为模板，保存到被 Git 忽略的 `config.local.toml`；
 设置其引用的凭据环境变量后执行 `uv run ginko check-config config.local.toml`。
 检查不连接外部服务，示例预算为零。功能进度见 [路线图](docs/roadmap.md)。
+
+运行后的模型调用可通过以下命令查询，数据库路径取决于配置中的数据目录：
+
+```powershell
+uv run ginko model-attempts data/ginko.sqlite3
+uv run ginko model-attempts data/ginko.sqlite3 --trace-id <trace_id>
+uv run ginko model-attempts data/ginko.sqlite3 <operation_id>
+```
+
+查询返回尝试状态、token 用量、费用和结果码，不包含提示词或回答正文。
+`reserved` 表示尚无持久结果；可能仍在调用中。取得独占锁的服务重启会将遗留未结算尝试标为
+`unknown` 并继续保留预算；单独查询不会触发恢复。`settled` 仅表示费用已结算，
+结果码 `accepted` 表示通过模型响应检查，业务校验和平台投递状态需分别查看。
 
 ## 结构
 

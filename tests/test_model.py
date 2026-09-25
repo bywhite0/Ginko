@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,6 +108,16 @@ def test_reservation_is_committed_before_http_and_actual_usage_settles(tmp_path,
             assert row["status"] == "settled"
             assert row["actual"] == 50
             assert len(requests) == 1
+            attempt = ledger(database).model_attempt(result.operation_id)
+            assert attempt.trace_id == str(trace)
+            assert attempt.status == "settled"
+            assert attempt.budget_status == "settled"
+            assert (attempt.prompt_tokens, attempt.completion_tokens, attempt.total_tokens) == (
+                30,
+                10,
+                40,
+            )
+            assert attempt.outcome_code == "accepted"
 
         asyncio.run(run())
 
@@ -190,6 +201,11 @@ def test_missing_or_untrustworthy_usage_keeps_full_reservation(database, setting
             assert error.value.retryable
         assert rows(database)[0]["status"] == "reserved"
         assert rows(database)[0]["actual"] is None
+        operation_id = rows(database)[0]["operation_id"]
+        attempt = ledger(database).model_attempt(operation_id)
+        assert attempt.status == "unknown"
+        assert attempt.budget_status == "reserved"
+        assert attempt.outcome_code == "unknown_usage"
 
     asyncio.run(run())
 
@@ -430,6 +446,9 @@ def test_cache_price_uses_only_validated_hit_counts_and_reserves_worst_case(data
         # Input: ceil((10*220000 + 20*7000)/1e6)=3; output: ceil(10*660000/1e6)=7.
         assert result.cost_microusd == 10
         assert rows(database)[0]["reserved"] == 286
+        attempt = ledger(database).model_attempt(result.operation_id)
+        assert attempt.cached_prompt_tokens == 20
+        assert attempt.actual_microusd == 10
 
     asyncio.run(run())
 
@@ -477,6 +496,9 @@ def test_body_and_reasoning_tokens_are_charged_together_without_assuming_cache_d
         ) as model:
             result = await model.complete(MESSAGES, trace_id=uuid4())
         assert result.cost_microusd == 50
+        attempt = ledger(database).model_attempt(result.operation_id)
+        assert attempt.cached_prompt_tokens == 20
+        assert attempt.reasoning_tokens == 8
 
     asyncio.run(run())
 
@@ -516,5 +538,23 @@ def test_real_http_nonstreaming_request_with_committed_budget(database, settings
             assert len(captured) == 1
             assert captured[0]["stream"] is False
         assert rows(database)[0]["status"] == "settled"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("data", [completion(), {}])
+def test_model_audit_write_failure_propagates(database, settings, data):
+    database.connection.execute("""CREATE TRIGGER reject_outcome
+        BEFORE UPDATE OF outcome_code ON model_attempts
+        BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END""")
+
+    async def run():
+        async with client(settings, ledger(database), lambda _: response(data)) as model:
+            with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
+                await model.complete(MESSAGES, trace_id=uuid4())
+        attempts = ledger(database).list_model_attempts()
+        assert len(attempts) == 1
+        assert attempts[0].outcome_code is None
+        assert attempts[0].budget_status == ("settled" if data else "reserved")
 
     asyncio.run(run())

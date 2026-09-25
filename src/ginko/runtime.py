@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from ginko.adapters.onebot import OneBotIngress
 from ginko.config import RuntimeConfig
 from ginko.instance import InstanceLock
+from ginko.storage.budget import BudgetLedger
 from ginko.storage.database import Database
 from ginko.storage.messages import (
     Delivery,
@@ -62,6 +63,10 @@ class Runtime:
                 agent_id=self.config.settings.agent_id
             )
             logger.info("recovered_unknown_deliveries count=%d", recovered)
+            recovered_attempts = BudgetLedger(
+                self.database, self.config.settings.budget.limits
+            ).recover_interrupted_model_attempts()
+            logger.info("recovered_interrupted_model_attempts count=%d", recovered_attempts)
             self.ingress = OneBotIngress(self.config.settings, self.store, self._wake_worker.set)
             self._tasks = [
                 asyncio.create_task(self._worker(), name="ginko-worker"),
