@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 from ginko.core.events import SessionRef
-from ginko.persona import Persona, load_ginko
+from ginko.persona import Persona, PersonaError, load_ginko, load_persona
 from ginko.storage.budget import BudgetLimits
 
 Name = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^\S+$")]
@@ -275,6 +275,9 @@ class RuntimeSettings(Settings):
     agent_id: Name = "ginko"
     data_dir: Annotated[str, Field(min_length=1)] = "data"
     approved_persona_version: Name
+    # A local persona directory also pins the reviewed content, not only its version.
+    persona_dir: Annotated[str | None, Field(min_length=1)] = None
+    approved_persona_sha256: Annotated[str | None, Field(pattern=r"^[0-9a-f]{64}$")] = None
     behavior: Literal["mixed"] = "mixed"
     autonomous: bool = False
     onebot: OneBotSettings
@@ -293,6 +296,10 @@ class RuntimeSettings(Settings):
     def validate_runtime(self) -> Self:
         if self.autonomous:
             raise ValueError("autonomous activity is not supported in this version")
+        if (self.persona_dir is None) != (self.approved_persona_sha256 is None):
+            raise ValueError("a persona directory requires its approved SHA-256, and only then")
+        if self.persona_dir is not None and "\x00" in self.persona_dir:
+            raise ValueError("persona directory must be a path")
         sessions = {(session.kind, session.chat_id) for session in self.allowed_sessions}
         if len(sessions) != len(self.allowed_sessions):
             raise ValueError("allowed sessions must be unique")
@@ -349,6 +356,25 @@ class RuntimeConfig:
     model_api_key: SecretStr = field(repr=False)
 
 
+def _approved_persona(config_path: Path, settings: RuntimeSettings) -> Persona:
+    try:
+        if settings.persona_dir is None:
+            persona = load_ginko()
+        else:
+            persona = load_persona((config_path.resolve().parent / settings.persona_dir).resolve())
+    except PersonaError as error:
+        raise ConfigurationError(f"persona error: {error}") from None
+    if persona.version != settings.approved_persona_version or (
+        settings.approved_persona_sha256 is not None
+        and persona.digest != settings.approved_persona_sha256
+    ):
+        raise ConfigurationError("persona differs from the approved version and content")
+    if persona.persona_id != settings.agent_id:
+        # Activities and future memories are scoped by agent; one agent keeps one persona.
+        raise ConfigurationError("agent_id must match the persona id")
+    return persona
+
+
 def load_config(path: Path, *, environ: Mapping[str, str] | None = None) -> RuntimeConfig:
     """Load explicit TOML and required environment secrets without creating runtime data."""
     try:
@@ -365,9 +391,7 @@ def load_config(path: Path, *, environ: Mapping[str, str] | None = None) -> Runt
             }
         )
         raise ConfigurationError("invalid configuration: " + ", ".join(locations)) from None
-    persona = load_ginko()
-    if persona.version != settings.approved_persona_version:
-        raise ConfigurationError("bundled persona differs from the approved version")
+    persona = _approved_persona(path, settings)
     environment = os.environ if environ is None else environ
     secrets = []
     for name in (settings.onebot.access_token_env, settings.model.api_key_env):

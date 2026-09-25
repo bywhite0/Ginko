@@ -3,6 +3,10 @@ config_version = 1
 agent_id = "ginko"
 data_dir = "data"
 approved_persona_version = "1.0.0"
+# Optional reviewed persona directory, relative to this file. It requires the content
+# digest reported by check-config, and agent_id must equal the persona id:
+# persona_dir = "personas/kaho"
+# approved_persona_sha256 = "<64 hex characters>"
 behavior = "mixed"
 autonomous = false
 relationships = []

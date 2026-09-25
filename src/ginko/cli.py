@@ -140,7 +140,9 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "status": "valid",
                     "config_version": settings.config_version,
+                    "persona_id": configured.persona.persona_id,
                     "persona_version": configured.persona.version,
+                    "persona_sha256": configured.persona.digest,
                     "allowed_sessions": len(settings.allowed_sessions),
                     "relationships": len(settings.relationships),
                     "autonomous": settings.autonomous,
