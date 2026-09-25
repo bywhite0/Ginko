@@ -103,7 +103,9 @@ async def exercise(directory: Path, mode: str):
     async with await asyncio.start_server(http_model, "127.0.0.1", 0) as model_server:
         port = model_server.sockets[0].getsockname()[1]
         raw = tomllib.loads((Path(__file__).parents[1] / "config.example.toml").read_text())
-        raw["model"].update(base_url=f"http://127.0.0.1:{port}/v1", timeout_seconds=1.0)
+        raw["model"].update(
+            base_url=f"http://127.0.0.1:{port}/v1", timeout_seconds=1.0, rate_windows=[]
+        )
         raw["activity"].update(lease_seconds=6, ttl_seconds=60)
         raw["budget"].update(daily_microusd=100_000, monthly_microusd=100_000)
         raw["onebot"]["api_timeout_seconds"] = 2.0
@@ -269,7 +271,7 @@ def test_complete_transport_chain_and_failure_supervision(tmp_path, mode):
             assert all(
                 attempt.status == "settled"
                 and attempt.outcome_code == "accepted"
-                and attempt.actual_microusd == 36
+                and attempt.actual_microusd == 27
                 for attempt in attempts
             )
         elif mode == "audit-failure":

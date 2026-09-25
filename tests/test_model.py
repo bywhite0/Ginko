@@ -36,6 +36,7 @@ def settings():
         input_microusd_per_million_tokens=1_000_000,
         cached_input_microusd_per_million_tokens=None,
         output_microusd_per_million_tokens=2_000_000,
+        rate_windows=[],
     )
     return RuntimeSettings.model_validate(raw).model
 

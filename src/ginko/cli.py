@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
                     "daily_microusd": settings.budget.daily_microusd,
                     "monthly_microusd": settings.budget.monthly_microusd,
                     "attempt_reservation_microusd": settings.model.reservation_microusd,
+                    "rate_windows": len(settings.model.rate_windows),
                     "live_gateway": False,
                     "live_model": False,
                 },

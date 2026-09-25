@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
@@ -126,9 +127,11 @@ class ChatClient:
         ledger: BudgetLedger,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.settings = settings
         self.ledger = ledger
+        self._clock = clock
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": f"Bearer {api_key.get_secret_value()}",
@@ -156,11 +159,12 @@ class ChatClient:
         # The trace prefix survives process restarts in the existing budget ledger.
         # Every explicit retry receives a fresh UUID and an independent reservation.
         operation_id = f"{trace_id}:{uuid4()}"
+        started_at = self._clock()
         self.ledger.reserve(
             operation_id,
             "reply",
             self.settings.reservation_microusd,
-            now=datetime.now(UTC),
+            now=started_at,
             trace_id=str(trace_id),
         )
         logger.info(
@@ -170,7 +174,9 @@ class ChatClient:
             self.settings.reservation_microusd,
         )
         try:
-            return await self._complete_reserved(payload, operation_id=operation_id)
+            return await self._complete_reserved(
+                payload, operation_id=operation_id, started_at=started_at
+            )
         except ModelCallError as error:
             self.ledger.record_model_outcome(operation_id, error.code)
             raise
@@ -186,7 +192,7 @@ class ChatClient:
             raise
 
     async def _complete_reserved(
-        self, payload: dict[str, object], *, operation_id: str
+        self, payload: dict[str, object], *, operation_id: str, started_at: datetime
     ) -> ModelReply:
         try:
             # HTTPX timeouts bound individual I/O phases; this also bounds the whole call.
@@ -204,6 +210,7 @@ class ChatClient:
                             raise ModelCallError("response_limit", operation_id=operation_id)
                         body.extend(chunk)
                     status = response.status_code
+            finished_at = self._clock()
         except asyncio.CancelledError:
             raise
         except (TimeoutError, httpx.TimeoutException):
@@ -246,15 +253,8 @@ class ChatClient:
         ):
             raise ModelCallError("unknown_usage", operation_id=operation_id, retryable=retryable)
 
-        cache_rate = self.settings.cached_input_microusd_per_million_tokens
-        if cache_rate is None:
-            cache_rate = self.settings.input_microusd_per_million_tokens
-        input_numerator = (
-            usage.prompt_tokens - usage.cached_tokens
-        ) * self.settings.input_microusd_per_million_tokens + usage.cached_tokens * cache_rate
-        cost = (input_numerator + 999_999) // 1_000_000 + (
-            usage.completion_tokens * self.settings.output_microusd_per_million_tokens + 999_999
-        ) // 1_000_000
+        rates = self.settings.rates_between(started_at, finished_at)
+        cost = rates.cost(usage.prompt_tokens, usage.cached_tokens, usage.completion_tokens)
         # Settle before inspecting generated content. Refusal, empty/truncated replies and
         # downstream JSON/business-validation failures must not erase billed usage.
         self.ledger.settle(

@@ -21,17 +21,30 @@ api_timeout_seconds = 10.0
 [model]
 protocol = "chat_completions"
 base_url = "https://api.example.invalid/v1"
-model = "deepseek-v4.1-flash"
+model = "deepseek-flash"
 api_key_env = "GINKO_MODEL_API_KEY"
 timeout_seconds = 30.0
 max_input_tokens = 16000
 max_output_tokens = 1000
 # Example rates only; verify your account's actual prices before paid use.
 # 1 USD = 1,000,000 micro-USD. Rates below apply to one million tokens.
-input_microusd_per_million_tokens = 220000
-cached_input_microusd_per_million_tokens = 7000
-output_microusd_per_million_tokens = 660000
-price_checked_on = 2026-09-23
+# DeepSeek official off-peak prices; they apply whenever no rate window matches.
+input_microusd_per_million_tokens = 150000
+cached_input_microusd_per_million_tokens = 3000
+output_microusd_per_million_tokens = 600000
+price_checked_on = 2026-09-25
+
+# Peak hours are UTC, Monday (1) to Friday (5). A call touching any window pays its
+# rates; reservations use the highest rates. List verified public holidays as UTC
+# dates in excluded_dates; unlisted holidays settle at peak rates.
+[[model.rate_windows]]
+name = "peak"
+weekdays = [1, 2, 3, 4, 5]
+utc_ranges = ["01:00-04:00", "06:00-10:00"]
+input_microusd_per_million_tokens = 300000
+cached_input_microusd_per_million_tokens = 6000
+output_microusd_per_million_tokens = 1200000
+excluded_dates = []
 
 [budget]
 daily_microusd = 0

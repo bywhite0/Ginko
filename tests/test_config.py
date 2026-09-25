@@ -148,6 +148,7 @@ def test_reservations_round_up_each_token_category(raw_config):
         max_output_tokens=1,
         input_microusd_per_million_tokens=1,
         output_microusd_per_million_tokens=1,
+        rate_windows=[],
     )
     assert RuntimeSettings.model_validate(raw_config).model.reservation_microusd == 2
 
